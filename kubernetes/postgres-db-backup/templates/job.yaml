@@ -68,6 +68,8 @@ spec:
               secretKeyRef:
                 name: wlm-s3-credentials
                 key: secret_key
+          - name: STORAGE_BUCKET
+            value: {{ .Values.storageBucket }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

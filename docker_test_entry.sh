@@ -29,4 +29,4 @@ if [[ -z "$QUIET" ]]; then
   pip3 freeze 2>&1 | tee /results/pip_freeze.out
 fi
 
-python -m unittest
+pytest
