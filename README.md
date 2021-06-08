@@ -15,11 +15,28 @@ docker run --rm postgres-db-backup:0.1.0
 
 ## Generating constraints.txt
 
+Clear out the current contents of constraints.txt.
+
+Run the following command:
+
 ```
 docker run --rm postgres-db-backup:0.1.0 pip freeze
 ```
 
-## Testing (using the Helm chart)
+Put the result in constraints.txt.
+
+Run the codestyle test below.
+Part of the output is the output of pip freeze after installing the test requirements.
+Update the constraints.txt with that output.
+
+## Running tests
+
+```
+docker build --tag postgres-db-backup-codestyle --target codestyle . &&
+docker run --rm postgres-db-backup-codestyle
+```
+
+## Testing using the Helm chart
 
 The helm chart in kubernetes/postgres-db-backup is useful for testing.
 
