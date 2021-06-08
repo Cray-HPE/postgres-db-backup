@@ -48,6 +48,8 @@ spec:
           - mountPath: '/work'
             name: work
           env:
+          - name: DB_NAME
+            value: {{ .Values.dbName }}
           - name: STORAGE_ENDPOINT
             valueFrom:
               secretKeyRef:
