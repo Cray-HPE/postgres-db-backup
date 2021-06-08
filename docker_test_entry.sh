@@ -1,3 +1,5 @@
+#!/bin/sh
+
 # MIT License
 # (C) Copyright [2021] Hewlett Packard Enterprise Development LP
 # Permission is hereby granted, free of charge, to any person obtaining a
@@ -16,43 +18,15 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
+set -ex
+set -o pipefail
 
-FROM arti.dev.cray.com/baseos-docker-master-local/alpine:3.12.6 AS base
+if [[ -z "$QUIET" ]]; then
+  ls -al
+fi
+mkdir -p /results
+if [[ -z "$QUIET" ]]; then
+  pip3 freeze 2>&1 | tee /results/pip_freeze.out
+fi
 
-WORKDIR /usr/src/app
-
-RUN apk add --no-cache python3 && ln -sf python3 /usr/bin/python
-RUN python3 -m ensurepip
-RUN pip3 install --no-cache --upgrade pip setuptools
-
-COPY requirements.txt constraints.txt ./
-RUN pip3 install --no-cache -r requirements.txt
-
-
-FROM base AS test_base
-
-COPY requirements_test.txt .
-RUN pip3 install --no-cache -r requirements_test.txt
-
-COPY postgres_db_backup.py .
-
-
-FROM test_base AS codestyle
-
-COPY docker_codestyle_entry.sh .flake8 ./
-
-CMD [ "./docker_codestyle_entry.sh" ]
-
-
-FROM test_base AS testing
-
-COPY docker_test_entry.sh test_postgres_db_backup.py ./
-
-CMD [ "./docker_test_entry.sh" ]
-
-
-FROM base
-
-COPY postgres_db_backup.py .
-
-CMD [ "python", "postgres_db_backup.py" ]
+python -m unittest

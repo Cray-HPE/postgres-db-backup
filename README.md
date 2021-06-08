@@ -33,7 +33,9 @@ Update the constraints.txt with that output.
 
 ```
 docker build --tag postgres-db-backup-codestyle --target codestyle . &&
-docker run --rm postgres-db-backup-codestyle
+docker run --rm postgres-db-backup-codestyle &&
+docker build --tag postgres-db-backup-test --target testing . &&
+docker run --rm postgres-db-backup-test
 ```
 
 ## Testing using the Helm chart
