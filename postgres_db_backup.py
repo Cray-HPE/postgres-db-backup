@@ -44,13 +44,12 @@ def fetch_secrets_yaml(ks_core_v1, name, namespace):
     return yaml.dump(res)
 
 
-def postgres_db_backup(db_name, bucket):
+def postgres_db_backup(db_name, namespace, bucket):
     ks_core_v1 = kubernetes.client.CoreV1Api()
     logging.info("Connected to k8s")
 
     # FIXME: need to get the leader instance and exec from there.
     pod_name = f'{db_name}-0'
-    namespace = 'services'
     container_name = 'postgres'
     logging.info(
         "Exec'ing pg_dumpall on -n %s -c %s %s...", namespace, container_name, pod_name)
@@ -75,14 +74,18 @@ def postgres_db_backup(db_name, bucket):
     with open(pgdump_filename, 'w') as f:
         while resp.is_open():
             resp.update(timeout=1)
+            any_output = False
             if resp.peek_stdout():
                 s = resp.read_stdout()
                 logging.info("Read %s from stdout", len(s))
                 f.write(s)
+                any_output = True
             if resp.peek_stderr():
                 s = resp.read_stderr()
                 logging.warn("Output on stderr:", s)
-            logging.info("Nothing in stout/stderr.")
+                any_output = True
+            if not any_output:
+                logging.info("Nothing in stout/stderr.")
         resp.close()
         logging.info("Closed pg_dumpall stream")
 
@@ -148,9 +151,10 @@ def main():
     kubernetes.config.load_incluster_config()
 
     db_name = os.environ['DB_NAME']
+    namespace = os.environ['NAMESPACE']
     bucket = os.environ['STORAGE_BUCKET']
 
-    postgres_db_backup(db_name, bucket)
+    postgres_db_backup(db_name, namespace, bucket)
 
 
 if __name__ == '__main__':
