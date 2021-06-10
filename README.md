@@ -11,8 +11,8 @@ The output of this program is that a couple of objects will be created in the bu
 
 The objects are:
 
-* `$DB_NAME.psql` : This is the pg-dump output.
-* `$DB_NAME.manifest` : These are extra objects (typically secrets) that are associated with the database.
+* `<db_name>-<timestamp>.psql` : This is the pg-dump output.
+* `<db_name>-<timestamp>.manifest` : These are extra objects (typically secrets) that are associated with the database.
 
 ### Environment
 
@@ -123,6 +123,8 @@ s3_client = boto3.client(
     aws_secret_access_key='usxKUeUr8PhzQbywjDp8Ckei8RRerGYcfL54i9BY',
     verify=False)
 
+res = s3_client.list_objects(Bucket='postgres-backup')
+print(f"keys: {[x['Key'] for x in res['Contents']]}")
 s3_client.download_file('postgres-backup', 'keycloak-postgres.psql', 'keycloak-postgres.psql')
 s3_client.download_file('postgres-backup', 'keycloak-postgres.manifest', 'keycloak-postgres.manifest')
 <<<
