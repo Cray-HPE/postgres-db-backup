@@ -21,13 +21,35 @@ import datetime
 import io
 import logging
 import os
-import threading
+import subprocess
 
 import boto3
 import kubernetes.client
 import kubernetes.config
 import kubernetes.stream
 import yaml
+
+
+def pg_dump_to_storage(key_base, stg_client, bucket):
+    logging.info("Exec'ing `pg_dumpall -c`")
+
+    pg_dumpall_subprocess = subprocess.Popen(['pg_dumpall', '-c'], stdout=subprocess.PIPE)
+
+    pgdump_key = f'{key_base}.psql'
+    logging.info(
+        "Sending pg_dump file to storage. bucket=%r, key=%r", bucket, pgdump_key)
+
+    stg_client.upload_fileobj(
+        pg_dumpall_subprocess.stdout, bucket, pgdump_key,
+        Callback=upload_fileobj_cb)
+
+    logging.info("Completed sending pg_dump file to storage.")
+
+    pg_dumpall_subprocess.wait()
+
+    if pg_dumpall_subprocess.returncode != 0:
+        logging.error("pg_dumpall exit status is %s", pg_dumpall_subprocess.returncode)
+        raise Exception("pg_dumpall command failed.")
 
 
 def fetch_secrets_yaml(ks_core_v1, name, namespace):
@@ -44,30 +66,6 @@ def fetch_secrets_yaml(ks_core_v1, name, namespace):
         'data': secret.data,
     }
     return yaml.dump(res)
-
-
-def read_pgdump_output(pgdump_stream, f):
-    total_stdout_bytes = 0
-
-    while pgdump_stream.is_open():
-        pgdump_stream.update(timeout=1)
-        any_output = False
-        if pgdump_stream.peek_stdout():
-            s = pgdump_stream.read_stdout()
-            bytes_read = len(s)
-            total_stdout_bytes = total_stdout_bytes + bytes_read
-            logging.info("Read %s from stdout (%s total)", bytes_read, total_stdout_bytes)
-            f.write(bytes(s, encoding='utf-8'))
-            any_output = True
-        if pgdump_stream.peek_stderr():
-            s = pgdump_stream.read_stderr()
-            logging.warn("Output on stderr: %s", s)
-            any_output = True
-        if not any_output:
-            logging.info("Nothing in stout/stderr.")
-    pgdump_stream.close()
-    logging.info("Closed pg_dumpall stream, read %s bytes from pg_dumpall", total_stdout_bytes)
-    f.close()
 
 
 def upload_fileobj_cb(count):
@@ -133,49 +131,14 @@ def cleanup_old_backups(stg_client, bucket, db_name):
 
 
 def postgres_db_backup(db_name, namespace, bucket):
-    ks_core_v1 = kubernetes.client.CoreV1Api()
-    logging.info("Connected to k8s")
-
-    # FIXME: need to get the leader instance and exec from there.
-    pod_name = f'{db_name}-0'
-    container_name = 'postgres'
-    logging.info(
-        "Exec'ing pg_dumpall on -n %s -c %s %s...", namespace, container_name, pod_name)
-    exec_command = [
-        'pg_dumpall',
-        '-U', 'postgres',
-        '-c',
-    ]
-    pgdump_stream = kubernetes.stream.stream(
-        ks_core_v1.connect_get_namespaced_pod_exec,
-        pod_name,
-        namespace,
-        container=container_name,
-        command=exec_command,
-        stderr=True, stdin=False,
-        stdout=True, tty=False,
-        _preload_content=False)
-
-    (read_fd, write_fd) = os.pipe()
-
-    f_read = os.fdopen(read_fd, 'rb')
-    f_write = os.fdopen(write_fd, 'wb')
-
-    t = threading.Thread(
-        target=read_pgdump_output, args=(pgdump_stream, f_write,))
-    t.start()
-
     stg_endpoint = os.environ['STORAGE_ENDPOINT']
     stg_tls_verify = (os.environ['STORAGE_TLS_VERIFY'].lower() == 'true')
     stg_acces_key = os.environ['STORAGE_ACCESS_KEY']
     stg_secret_key = os.environ['STORAGE_SECRET_KEY']
 
-    key_base = calc_key_base(db_name)
-
-    pgdump_key = f'{key_base}.psql'
     logging.info(
-        "Sending pg_dump file to storage. endpoint=%s, access_key=%s, bucket=%r, key=%r",
-        stg_endpoint, stg_acces_key, bucket, pgdump_key)
+        "Initializing storage client. endpoint=%s access_key=%s",
+        stg_endpoint, stg_acces_key)
 
     stg_client = boto3.client(
         's3',
@@ -184,13 +147,11 @@ def postgres_db_backup(db_name, namespace, bucket):
         aws_access_key_id=stg_acces_key,
         aws_secret_access_key=stg_secret_key)
 
-    # FIXME: any attributes to set on the file?
-    stg_client.upload_fileobj(f_read, bucket, pgdump_key, Callback=upload_fileobj_cb)
-    logging.info("Completed sending pg_dump file to storage.")
+    key_base = calc_key_base(db_name)
 
-    t.join()
-    f_read.close()
+    pg_dump_to_storage(key_base, stg_client, bucket)
 
+    ks_core_v1 = kubernetes.client.CoreV1Api()
     sa_creds = fetch_secrets_yaml(
         ks_core_v1, f'service-account.{db_name}.credentials', namespace)
     pg_creds = fetch_secrets_yaml(

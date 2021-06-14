@@ -24,14 +24,8 @@ metadata:
   name: {{ include "postgres-db-backup.fullname" . }}
 rules:
 - apiGroups: [""]
-  resources: ["pods", "pods/log"]
-  verbs: ["get", "list"]
-- apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get"]
-- apiGroups: [""]
-  resources: ["pods/exec"]
-  verbs: ["get", "create"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
