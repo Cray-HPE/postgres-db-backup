@@ -61,31 +61,31 @@ spec:
             valueFrom:
               secretKeyRef:
                 key: username
-                name: postgres.keycloak-postgres.credentials
+                name: postgres.{{ .Values.dbName }}.credentials
           - name: PGPASSWORD
             valueFrom:
               secretKeyRef:
                 key: password
-                name: postgres.keycloak-postgres.credentials
+                name: postgres.{{ .Values.dbName }}.credentials
           - name: STORAGE_ENDPOINT
             valueFrom:
               secretKeyRef:
-                name: wlm-s3-credentials
+                name: {{ .Values.storageSecret }}
                 key: s3_endpoint
           - name: STORAGE_TLS_VERIFY
             valueFrom:
               secretKeyRef:
-                name: wlm-s3-credentials
+                name: {{ .Values.storageSecret }}
                 key: ssl_validate
           - name: STORAGE_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: wlm-s3-credentials
+                name: {{ .Values.storageSecret }}
                 key: access_key
           - name: STORAGE_SECRET_KEY
             valueFrom:
               secretKeyRef:
-                name: wlm-s3-credentials
+                name: {{ .Values.storageSecret }}
                 key: secret_key
           - name: STORAGE_BUCKET
             value: {{ .Values.storageBucket }}
