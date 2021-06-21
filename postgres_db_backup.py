@@ -44,7 +44,7 @@ def fetch_secrets_yaml(ks_core_v1, name, namespace):
     return yaml.dump(res)
 
 
-def postgres_db_backup():
+def postgres_db_backup(bucket):
     ks_core_v1 = kubernetes.client.CoreV1Api()
     logging.info("Connected to k8s")
 
@@ -95,8 +95,6 @@ def postgres_db_backup():
     stg_acces_key = os.environ['STORAGE_ACCESS_KEY']
     stg_secret_key = os.environ['STORAGE_SECRET_KEY']
 
-    # FIXME: this is the wrong bucket.
-    bucket = 'wlm'
     pgdump_key = 'keycloak-pgdump.psql'  # FIXME: generalize, not just keycloak.
     logging.info(
         "Sending pg_dump file to storage. endpoint=%s, access_key=%s, bucket=%r, key=%r",
@@ -147,7 +145,9 @@ def main():
     # Load K8s configuration
     kubernetes.config.load_incluster_config()
 
-    postgres_db_backup()
+    bucket = os.environ['STORAGE_BUCKET']
+
+    postgres_db_backup(bucket)
 
 
 if __name__ == '__main__':
