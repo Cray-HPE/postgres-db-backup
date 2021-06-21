@@ -20,6 +20,7 @@
 import io
 import logging
 import os
+import threading
 
 import boto3
 import kubernetes.client
@@ -44,6 +45,34 @@ def fetch_secrets_yaml(ks_core_v1, name, namespace):
     return yaml.dump(res)
 
 
+def read_pgdump_output(pgdump_stream, f):
+    total_stdout_bytes = 0
+
+    while pgdump_stream.is_open():
+        pgdump_stream.update(timeout=1)
+        any_output = False
+        if pgdump_stream.peek_stdout():
+            s = pgdump_stream.read_stdout()
+            bytes_read = len(s)
+            total_stdout_bytes = total_stdout_bytes + bytes_read
+            logging.info("Read %s from stdout (%s total)", bytes_read, total_stdout_bytes)
+            f.write(bytes(s, encoding='utf-8'))
+            any_output = True
+        if pgdump_stream.peek_stderr():
+            s = pgdump_stream.read_stderr()
+            logging.warn("Output on stderr: %s", s)
+            any_output = True
+        if not any_output:
+            logging.info("Nothing in stout/stderr.")
+    pgdump_stream.close()
+    logging.info("Closed pg_dumpall stream, read %s bytes from pg_dumpall", total_stdout_bytes)
+    f.close()
+
+
+def upload_fileobj_cb(count):
+    logging.info("progress: upload_fileobj sent %s bytes.", count)
+
+
 def postgres_db_backup(db_name, namespace, bucket):
     ks_core_v1 = kubernetes.client.CoreV1Api()
     logging.info("Connected to k8s")
@@ -58,7 +87,7 @@ def postgres_db_backup(db_name, namespace, bucket):
         '-U', 'postgres',
         '-c',
     ]
-    resp = kubernetes.stream.stream(
+    pgdump_stream = kubernetes.stream.stream(
         ks_core_v1.connect_get_namespaced_pod_exec,
         pod_name,
         namespace,
@@ -68,34 +97,14 @@ def postgres_db_backup(db_name, namespace, bucket):
         stdout=True, tty=False,
         _preload_content=False)
 
-    # FIXME: is there some way to stream the output directly to s3?
-    pgdump_filename = '/work/pg_dump.psql'
+    (read_fd, write_fd) = os.pipe()
 
-    with open(pgdump_filename, 'w') as f:
-        while resp.is_open():
-            resp.update(timeout=1)
-            any_output = False
-            if resp.peek_stdout():
-                s = resp.read_stdout()
-                logging.info("Read %s from stdout", len(s))
-                f.write(s)
-                any_output = True
-            if resp.peek_stderr():
-                s = resp.read_stderr()
-                logging.warn("Output on stderr:", s)
-                any_output = True
-            if not any_output:
-                logging.info("Nothing in stout/stderr.")
-        resp.close()
-        logging.info("Closed pg_dumpall stream")
+    f_read = os.fdopen(read_fd, 'rb')
+    f_write = os.fdopen(write_fd, 'wb')
 
-    # FIXME: this isn't going to work if the file is large,
-    # figure out a better way to log some info about the file.
-    with open(pgdump_filename, 'r') as f:
-        logging.info("Contents of %s", pgdump_filename)
-        logging.info("-------------------------")
-        logging.info('\n%s', f.read())
-        logging.info("-------------------------")
+    t = threading.Thread(
+        target=read_pgdump_output, args=(pgdump_stream, f_write,))
+    t.start()
 
     stg_endpoint = os.environ['STORAGE_ENDPOINT']
     stg_tls_verify = (os.environ['STORAGE_TLS_VERIFY'].lower() == 'true')
@@ -115,8 +124,11 @@ def postgres_db_backup(db_name, namespace, bucket):
         aws_secret_access_key=stg_secret_key)
 
     # FIXME: any attributes to set on the file?
-    stg_client.upload_file(pgdump_filename, bucket, pgdump_key)
+    stg_client.upload_fileobj(f_read, bucket, pgdump_key, Callback=upload_fileobj_cb)
     logging.info("Completed sending pg_dump file to storage.")
+
+    t.join()
+    f_read.close()
 
     sa_creds = fetch_secrets_yaml(
         ks_core_v1, f'service-account.{db_name}.credentials', namespace)
