@@ -97,7 +97,7 @@ def postgres_db_backup():
 
     # FIXME: this is the wrong bucket.
     bucket = 'wlm'
-    pgdump_key = 'keycloak-pgdump.psql' # FIXME: generalize, not just keycloak.
+    pgdump_key = 'keycloak-pgdump.psql'  # FIXME: generalize, not just keycloak.
     logging.info(
         "Sending pg_dump file to storage. endpoint=%s, access_key=%s, bucket=%r, key=%r",
         stg_endpoint, stg_acces_key, bucket, pgdump_key)
