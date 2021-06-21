@@ -44,12 +44,16 @@ def fetch_secrets_yaml(ks_core_v1, name, namespace):
     return yaml.dump(res)
 
 
-def postgres_db_backup(bucket):
+def postgres_db_backup(db_name, bucket):
     ks_core_v1 = kubernetes.client.CoreV1Api()
     logging.info("Connected to k8s")
 
     # FIXME: need to get the leader instance and exec from there.
-    logging.info("Exec'ing pg_dumpall...")
+    pod_name = f'{db_name}-0'
+    namespace = 'services'
+    container_name = 'postgres'
+    logging.info(
+        "Exec'ing pg_dumpall on -n %s -c %s %s...", namespace, container_name, pod_name)
     exec_command = [
         'pg_dumpall',
         '-U', 'postgres',
@@ -57,9 +61,9 @@ def postgres_db_backup(bucket):
     ]
     resp = kubernetes.stream.stream(
         ks_core_v1.connect_get_namespaced_pod_exec,
-        'keycloak-postgres-0',
-        'services',
-        container='postgres',
+        pod_name,
+        namespace,
+        container=container_name,
         command=exec_command,
         stderr=True, stdin=False,
         stdout=True, tty=False,
@@ -95,7 +99,7 @@ def postgres_db_backup(bucket):
     stg_acces_key = os.environ['STORAGE_ACCESS_KEY']
     stg_secret_key = os.environ['STORAGE_SECRET_KEY']
 
-    pgdump_key = 'keycloak-pgdump.psql'  # FIXME: generalize, not just keycloak.
+    pgdump_key = f'{db_name}.psql'
     logging.info(
         "Sending pg_dump file to storage. endpoint=%s, access_key=%s, bucket=%r, key=%r",
         stg_endpoint, stg_acces_key, bucket, pgdump_key)
@@ -112,11 +116,11 @@ def postgres_db_backup(bucket):
     logging.info("Completed sending pg_dump file to storage.")
 
     sa_creds = fetch_secrets_yaml(
-        ks_core_v1, 'service-account.keycloak-postgres.credentials', 'services')
+        ks_core_v1, f'service-account.{db_name}.credentials', namespace)
     pg_creds = fetch_secrets_yaml(
-        ks_core_v1, 'postgres.keycloak-postgres.credentials', 'services')
+        ks_core_v1, f'postgres.{db_name}.credentials', namespace)
     standby_creds = fetch_secrets_yaml(
-        ks_core_v1, 'standby.keycloak-postgres.credentials', 'services')
+        ks_core_v1, f'standby.{db_name}.credentials', namespace)
 
     creds_contents = f'''
 ---
@@ -129,11 +133,9 @@ def postgres_db_backup(bucket):
 {standby_creds}
 '''
 
-    creds_key = 'keycloak-creds.yaml'
+    creds_key = f'{db_name}.manifest'
     stg_client.upload_fileobj(
-        io.BytesIO(creds_contents.encode('utf-8')),
-        bucket,
-        'keycloak-creds.yaml')
+        io.BytesIO(creds_contents.encode('utf-8')), bucket, creds_key)
     logging.info("Completed sending creds file to storage. key=%r", creds_key)
 
 
@@ -145,9 +147,10 @@ def main():
     # Load K8s configuration
     kubernetes.config.load_incluster_config()
 
+    db_name = os.environ['DB_NAME']
     bucket = os.environ['STORAGE_BUCKET']
 
-    postgres_db_backup(bucket)
+    postgres_db_backup(db_name, bucket)
 
 
 if __name__ == '__main__':

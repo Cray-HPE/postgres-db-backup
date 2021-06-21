@@ -70,4 +70,5 @@ tolerations: []
 
 affinity: {}
 
+dbName: keycloak-postgres
 storageBucket: postgres-backup

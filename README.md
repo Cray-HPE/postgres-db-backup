@@ -5,8 +5,18 @@ The backup is stored in s3 (radosgw).
 
 This section describes the image.
 
+### Results
+
+The output of this program is that a couple of objects will be created in the bucket.
+
+The objects are:
+
+* `$DB_NAME.psql` : This is the pg-dump output.
+* `$DB_NAME.manifest` : These are extra objects (typically secrets) that are associated with the database.
+
 ### Environment
 
+* `DB_NAME` : This is used as the base for the keys of the objects added to the bucket for the database being backed up.
 * `STORAGE_ENDPOINT` : The endpoint for the radosgw.
 * `STORAGE_TLS_VERIFY` : Boolean that indicates whether to validate the storage endpoint host certificate.
 * `STORAGE_ACCESS_KEY` : The access key to present when accessing the storage endpoint.
@@ -68,6 +78,7 @@ cat > myvalues.yaml <<EOF
 image:
   repository: "gcr.io/vshasta-bknudson-3568233492353/postgres-db-backup"
   tag: "0.1.0"
+dbName: keycloak-postgres
 EOF
 ```
 
@@ -86,7 +97,7 @@ helm uninstall -n services postgres-db-backup
 rm -r postgres-db-backup
 ```
 
-### Getting the backup off the test ncn
+### Getting the backup out of s3
 
 ```
 kubectl get secret -n services postgres-backup-s3-credentials -ojsonpath='{.data.access_key}' | base64 -d ; echo
@@ -111,7 +122,7 @@ s3_client = boto3.client(
     aws_secret_access_key='usxKUeUr8PhzQbywjDp8Ckei8RRerGYcfL54i9BY',
     verify=False)
 
-s3_client.download_file('postgres-backup', 'keycloak-pgdump.mysql', 'pg_dump.mysql')
-s3_client.download_file('postgres-backup', 'keycloak-creds.yaml', 'creds.yaml')
+s3_client.download_file('postgres-backup', 'keycloak-postgres.psql', 'keycloak-postgres.psql')
+s3_client.download_file('postgres-backup', 'keycloak-postgres.manifest', 'keycloak-postgres.manifest')
 <<<
 ```
