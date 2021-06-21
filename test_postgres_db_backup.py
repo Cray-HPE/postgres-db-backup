@@ -64,8 +64,10 @@ def test_fetch_secrets_yaml():
 def test_main(mock_pdb, mock_ks_config, monkeypatch):
     db_name = 'fake_db_name'
     monkeypatch.setenv('DB_NAME', db_name)
+    namespace = 'fake_namespace'
+    monkeypatch.setenv('NAMESPACE', namespace)
     bucket_name = 'fake_bucket'
     monkeypatch.setenv('STORAGE_BUCKET', bucket_name)
     postgres_db_backup.main()
     mock_ks_config.load_incluster_config.assert_called_once_with()
-    mock_pdb.assert_called_once_with(db_name, bucket_name)
+    mock_pdb.assert_called_once_with(db_name, namespace, bucket_name)

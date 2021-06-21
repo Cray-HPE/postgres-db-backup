@@ -17,6 +17,7 @@ The objects are:
 ### Environment
 
 * `DB_NAME` : This is used as the base for the keys of the objects added to the bucket for the database being backed up.
+* `NAMESPACE` : The Kubernetes namespace that the database to backup is deployed to.
 * `STORAGE_ENDPOINT` : The endpoint for the radosgw.
 * `STORAGE_TLS_VERIFY` : Boolean that indicates whether to validate the storage endpoint host certificate.
 * `STORAGE_ACCESS_KEY` : The access key to present when accessing the storage endpoint.
