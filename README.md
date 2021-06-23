@@ -26,6 +26,15 @@ If the new objects are created then any older objects for the DB are removed.
 * `STORAGE_SECRET_KEY` : The secret key to present when accessing the storage endpoint.
 * `STORAGE_BUCKET` : The bucket to store the backup objects in.
 
+The tool exec's the `pg_dumpall` command that uses several arguments from the
+environment. See https://www.postgresql.org/docs/9.2/libpq-envars.html .
+
+* `PGHOST` : Hostname to connect to
+* `PGPORT` : Port to connect to
+* `PGDATABASE` : Database to backup
+* `PGUSER` : User to connect as
+* `PGPASSWORD` : User's password
+
 ## Building
 
 ```

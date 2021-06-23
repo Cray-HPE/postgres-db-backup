@@ -17,11 +17,47 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
+import subprocess
 import unittest.mock as mock
 
+import pytest
 import yaml
 
 import postgres_db_backup
+
+
+@mock.patch('postgres_db_backup.subprocess.Popen')
+def test_pg_dump_to_storage_works(m_popen):
+    m_popen.return_value.returncode = 0
+
+    key_base = 'fake_key_base'
+    m_stg_client = mock.Mock()
+    bucket = 'fake_bucket'
+    postgres_db_backup.pg_dump_to_storage(key_base, m_stg_client, bucket)
+
+    exp_command = ['pg_dumpall', '-c']
+    m_popen.assert_called_once_with(exp_command, stdout=subprocess.PIPE)
+
+    exp_pgdump_key = f'{key_base}.psql'
+    m_stg_client.upload_fileobj.assert_called_once_with(
+        m_popen.return_value.stdout,
+        bucket,
+        exp_pgdump_key,
+        Callback=postgres_db_backup.upload_fileobj_cb)
+
+    m_popen.return_value.wait.assert_called_once_with()
+
+
+@mock.patch('postgres_db_backup.subprocess.Popen')
+def test_pg_dump_to_storage_bad_exit_code(m_popen):
+    # When the exit status of the pg_dumpall subprocess is not 0 an exception is
+    # raised.
+    m_popen.return_value.returncode = 1
+    key_base = 'fake_key_base'
+    m_stg_client = mock.Mock()
+    bucket = 'fake_bucket'
+    with pytest.raises(Exception, match="pg_dumpall command failed."):
+        postgres_db_backup.pg_dump_to_storage(key_base, m_stg_client, bucket)
 
 
 def test_fetch_secrets_yaml():
