@@ -17,6 +17,7 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
+import datetime
 import io
 import logging
 import os
@@ -73,6 +74,12 @@ def upload_fileobj_cb(count):
     logging.info("progress: upload_fileobj sent %s bytes.", count)
 
 
+def calc_key_base(db_name):
+    # The key base is made up of the db_name and a timestamp.
+    timestamp = datetime.datetime.utcnow().isoformat(timespec='seconds')
+    return f'{db_name}-{timestamp}'
+
+
 def postgres_db_backup(db_name, namespace, bucket):
     ks_core_v1 = kubernetes.client.CoreV1Api()
     logging.info("Connected to k8s")
@@ -111,7 +118,9 @@ def postgres_db_backup(db_name, namespace, bucket):
     stg_acces_key = os.environ['STORAGE_ACCESS_KEY']
     stg_secret_key = os.environ['STORAGE_SECRET_KEY']
 
-    pgdump_key = f'{db_name}.psql'
+    key_base = calc_key_base(db_name)
+
+    pgdump_key = f'{key_base}.psql'
     logging.info(
         "Sending pg_dump file to storage. endpoint=%s, access_key=%s, bucket=%r, key=%r",
         stg_endpoint, stg_acces_key, bucket, pgdump_key)
@@ -148,7 +157,7 @@ def postgres_db_backup(db_name, namespace, bucket):
 {standby_creds}
 '''
 
-    creds_key = f'{db_name}.manifest'
+    creds_key = f'{key_base}.manifest'
     stg_client.upload_fileobj(
         io.BytesIO(creds_contents.encode('utf-8')), bucket, creds_key)
     logging.info("Completed sending creds file to storage. key=%r", creds_key)

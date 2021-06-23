@@ -59,6 +59,16 @@ def test_fetch_secrets_yaml():
     assert exp_res == res
 
 
+@mock.patch('postgres_db_backup.datetime')
+def test_calc_key_base(m_datetime):
+    timestamp = 'fake_timestamp'
+    m_datetime.datetime.utcnow.return_value.isoformat.return_value = timestamp
+    db_name = 'fake_db_name'
+    res = postgres_db_backup.calc_key_base(db_name)
+    exp = f'{db_name}-{timestamp}'
+    assert res == exp
+
+
 @mock.patch('postgres_db_backup.kubernetes.config')
 @mock.patch('postgres_db_backup.postgres_db_backup')
 def test_main(mock_pdb, mock_ks_config, monkeypatch):
