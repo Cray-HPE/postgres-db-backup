@@ -80,6 +80,58 @@ def calc_key_base(db_name):
     return f'{db_name}-{timestamp}'
 
 
+def get_keys_for_db(stg_client, bucket, db_name):
+    prefix = f'{db_name}-'
+    logging.info("Listing objects in %r with prefix %r", bucket, prefix)
+    res = stg_client.list_objects(Bucket=bucket, Prefix=prefix)
+    keys = [x['Key'] for x in res['Contents']]
+    logging.info("Keys for db %r: %s", db_name, keys)
+    return keys
+
+
+def calc_timestamp(db_name, key):
+    # Extracts the timestamp from the key.
+    # The key is like <db_name>-<timestamp>.<suffix>.
+    key = key[len(db_name)+1:]
+    key = key.rsplit('.', 1)[0]
+    return key
+
+
+def calc_timestamps(db_name, keys):
+    # Given a list of keys, returns a sorted list of unique timestamps from the
+    # keys.
+    timestamps = list({calc_timestamp(db_name, k) for k in keys})
+    timestamps.sort()
+    return timestamps
+
+
+def get_backup_timestamps(stg_client, bucket, db_name):
+    # Returns a sorted list of the timestamps for the backups for the DB.
+    keys = get_keys_for_db(stg_client, bucket, db_name)
+    timestamps = calc_timestamps(db_name, keys)
+    return (keys, timestamps)
+
+
+def calc_timestamps_to_delete(backup_timestamps):
+    # Just keeping the most recent backup.
+    return backup_timestamps[:-1]
+
+
+def delete_backups(stg_client, bucket, db_name, keys, timestamps_to_delete):
+    logging.info("Deleting backups with timestamps %s", timestamps_to_delete)
+    for k in keys:
+        k_ts = calc_timestamp(db_name, k)
+        if k_ts in timestamps_to_delete:
+            logging.info("Deleting %r", k)
+            stg_client.delete_object(Bucket=bucket, Key=k)
+
+
+def cleanup_old_backups(stg_client, bucket, db_name):
+    keys, backup_timestamps = get_backup_timestamps(stg_client, bucket, db_name)
+    timestamps_to_delete = calc_timestamps_to_delete(backup_timestamps)
+    delete_backups(stg_client, bucket, db_name, keys, timestamps_to_delete)
+
+
 def postgres_db_backup(db_name, namespace, bucket):
     ks_core_v1 = kubernetes.client.CoreV1Api()
     logging.info("Connected to k8s")
@@ -161,6 +213,8 @@ def postgres_db_backup(db_name, namespace, bucket):
     stg_client.upload_fileobj(
         io.BytesIO(creds_contents.encode('utf-8')), bucket, creds_key)
     logging.info("Completed sending creds file to storage. key=%r", creds_key)
+
+    cleanup_old_backups(stg_client, bucket, db_name)
 
 
 def main():
