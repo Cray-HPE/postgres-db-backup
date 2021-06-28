@@ -21,7 +21,7 @@ FROM arti.dev.cray.com/baseos-docker-master-local/alpine:3.12.6 AS base
 
 WORKDIR /usr/src/app
 
-RUN apk add --no-cache postgresql-client python3 && ln -sf python3 /usr/bin/python
+RUN apk add --no-cache python3 postgresql-client postgresql-dev gcc python3-dev musl-dev && ln -sf python3 /usr/bin/python
 RUN python3 -m ensurepip
 RUN pip3 install --no-cache --upgrade pip setuptools
 

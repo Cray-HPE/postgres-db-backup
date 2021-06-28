@@ -28,13 +28,54 @@ import boto3
 import kubernetes.client
 import kubernetes.config
 import kubernetes.stream
+import psycopg2
 import yaml
 
 
-def pg_dump_to_storage(key_base, stg_client, bucket):
-    logging.info("Exec'ing `pg_dumpall -c`")
+def query_replicas(pg_host, pg_port, pg_database, pg_user, pg_password):
+    logging.info("Connecting to database...")
+    with psycopg2.connect(
+            dbname=pg_database, user=pg_user, password=pg_password,
+            host=pg_host, port=pg_port) as conn:
+        with conn.cursor() as curs:
+            # This should be a small result set so just fetch them all,
+            # then the result can be logged to help debugging.
+            # Notes that the pg_stat_replication view only contains the
+            # slots/replicas that are currently working.
+            sql = (
+                "SELECT application_name, pg_current_wal_lsn() - replay_lsn AS behind"
+                " FROM pg_stat_replication"
+                " WHERE state='streaming'")
+            curs.execute(sql)
+            res = curs.fetchall()
+            logging.info("res = %s", res)
 
-    pg_dumpall_subprocess = subprocess.Popen(['pg_dumpall', '-c'], stdout=subprocess.PIPE)
+    if not res:
+        # There's no replicas.
+        return None
+
+    # This sorts the result by how far behind the replica is.
+    res.sort(key=lambda r: r[1])
+    # Check if the closest replica is close enough.
+    if res[0][1] < (1024 * 1024):
+        return res[0][0]
+    # Otherwise the closest replica is too far out of sync.
+
+
+def select_target_pg_host(pg_host, pg_port, pg_database, pg_user, pg_password):
+    target_replica = query_replicas(pg_host, pg_port, pg_database, pg_user, pg_password)
+    if target_replica:
+        logging.info("Target replica is %r", target_replica)
+        return target_replica
+    logging.info("No target replica so using pg_host %r", pg_host)
+    return pg_host
+
+
+def pg_dump_to_storage(target_host, key_base, stg_client, bucket):
+    cmd = ['pg_dumpall', '-c', '-h', target_host]
+    logging.info("Exec'ing %r", cmd)
+
+    pg_dumpall_subprocess = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
     pgdump_key = f'{key_base}.psql'
     logging.info(
@@ -163,8 +204,13 @@ def cleanup_old_backups(stg_client, bucket, db_name):
 
 
 def postgres_db_backup(
-        db_name, users, namespace, bucket, stg_endpoint, stg_tls_verify,
-        stg_acces_key, stg_secret_key):
+        db_name, users, namespace, bucket,
+        pg_host, pg_port, pg_database, pg_user, pg_password,
+        stg_endpoint, stg_tls_verify, stg_acces_key, stg_secret_key):
+
+    target_pg_host = select_target_pg_host(
+        pg_host, pg_port, pg_database, pg_user, pg_password)
+
     logging.info(
         "Initializing storage client. endpoint=%s access_key=%s",
         stg_endpoint, stg_acces_key)
@@ -178,7 +224,7 @@ def postgres_db_backup(
 
     key_base = calc_key_base(db_name)
 
-    pg_dump_to_storage(key_base, stg_client, bucket)
+    pg_dump_to_storage(target_pg_host, key_base, stg_client, bucket)
     k8s_objects_to_storage(db_name, users, namespace, stg_client, bucket, key_base)
     cleanup_old_backups(stg_client, bucket, db_name)
 
@@ -197,14 +243,21 @@ def main():
     namespace = os.environ['NAMESPACE']
     bucket = os.environ['STORAGE_BUCKET']
 
+    pg_host = os.environ['PGHOST']
+    pg_port = os.environ['PGPORT']
+    pg_database = os.environ['PGDATABASE']
+    pg_user = os.environ['PGUSER']
+    pg_password = os.environ['PGPASSWORD']
+
     stg_endpoint = os.environ['STORAGE_ENDPOINT']
     stg_tls_verify = (os.environ['STORAGE_TLS_VERIFY'].lower() == 'true')
     stg_acces_key = os.environ['STORAGE_ACCESS_KEY']
     stg_secret_key = os.environ['STORAGE_SECRET_KEY']
 
     postgres_db_backup(
-        db_name, users, namespace, bucket, stg_endpoint, stg_tls_verify,
-        stg_acces_key, stg_secret_key)
+        db_name, users, namespace, bucket,
+        pg_host, pg_port, pg_database, pg_user, pg_password,
+        stg_endpoint, stg_tls_verify, stg_acces_key, stg_secret_key)
 
 
 if __name__ == '__main__':
