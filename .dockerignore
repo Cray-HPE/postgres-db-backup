@@ -1,5 +1,7 @@
 .git
+.gitignore
 .version
 Dockerfile
 kubernetes
 README.md
+results
