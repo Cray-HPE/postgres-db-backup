@@ -69,3 +69,5 @@ affinity: {}
 dbName: keycloak-postgres
 storageBucket: postgres-backup
 storageSecret: postgres-backup-s3-credentials
+users:
+  - service_account

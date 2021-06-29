@@ -17,6 +17,7 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
+import json
 import subprocess
 import unittest.mock as mock
 
@@ -93,6 +94,95 @@ def test_fetch_secrets_yaml():
     })
 
     assert exp_res == res
+
+
+def test_user_name_to_secret_name():
+    assert postgres_db_backup.user_name_to_secret_name('user1') == 'user1'
+    # _ gets converted to -
+    assert postgres_db_backup.user_name_to_secret_name('service_account') == 'service-account'
+
+
+@mock.patch('postgres_db_backup.io')
+@mock.patch('postgres_db_backup.kubernetes.client', autospec=True)
+@mock.patch('postgres_db_backup.fetch_secrets_yaml', autospec=True)
+def test_k8s_objects_to_storage_no_user(m_fsy, m_kc, m_io):
+    users = []
+    db_name = 'fake_db_name'
+    namespace = 'fake_db_name'
+    stg_client = mock.Mock()
+    bucket = 'fake_bucket'
+    key_base = 'fake_key_base'
+
+    m_fsy.side_effect = (
+        'pg_yaml',
+        'sb_yaml',
+        Exception()
+    )
+    postgres_db_backup.k8s_objects_to_storage(
+        db_name, users, namespace, stg_client, bucket, key_base)
+
+    m_kc.CoreV1Api.assert_called_once_with()
+    m_fsy.assert_any_call(
+        m_kc.CoreV1Api.return_value, f'postgres.{db_name}.credentials', namespace)
+    m_fsy.assert_any_call(
+        m_kc.CoreV1Api.return_value, f'standby.{db_name}.credentials', namespace)
+    assert m_fsy.call_count == 2
+
+    exp_creds_contents = b'''
+---
+pg_yaml
+
+---
+sb_yaml
+'''
+
+    m_io.BytesIO.assert_called_with(exp_creds_contents)
+    stg_client.upload_fileobj(mock.ANY, bucket, f'{key_base}.manifest')
+
+
+@mock.patch('postgres_db_backup.io')
+@mock.patch('postgres_db_backup.kubernetes.client', autospec=True)
+@mock.patch('postgres_db_backup.fetch_secrets_yaml', autospec=True)
+def test_k8s_objects_to_storage_user(m_fsy, m_kc, m_io):
+    users = ['service_account']
+    db_name = 'fake_db_name'
+    namespace = 'fake_db_name'
+    stg_client = mock.Mock()
+    bucket = 'fake_bucket'
+    key_base = 'fake_key_base'
+
+    m_fsy.side_effect = (
+        'sa_yaml',
+        'pg_yaml',
+        'sb_yaml',
+        Exception()
+    )
+    postgres_db_backup.k8s_objects_to_storage(
+        db_name, users, namespace, stg_client, bucket, key_base)
+
+    m_kc.CoreV1Api.assert_called_once_with()
+    # Note that _ got converted to - for service-account.
+    m_fsy.assert_any_call(
+        m_kc.CoreV1Api.return_value, f'service-account.{db_name}.credentials', namespace)
+    m_fsy.assert_any_call(
+        m_kc.CoreV1Api.return_value, f'postgres.{db_name}.credentials', namespace)
+    m_fsy.assert_any_call(
+        m_kc.CoreV1Api.return_value, f'standby.{db_name}.credentials', namespace)
+    assert m_fsy.call_count == 3
+
+    exp_creds_contents = b'''
+---
+sa_yaml
+
+---
+pg_yaml
+
+---
+sb_yaml
+'''
+
+    m_io.BytesIO.assert_called_with(exp_creds_contents)
+    stg_client.upload_fileobj(mock.ANY, bucket, f'{key_base}.manifest')
 
 
 @mock.patch('postgres_db_backup.datetime')
@@ -238,15 +328,61 @@ def test_cleanup_old_backups(m_db, m_cttd, m_gbt):
         stg_client, bucket, db_name, mock.sentinel.keys, m_cttd.return_value)
 
 
+@mock.patch('postgres_db_backup.boto3', autospec=True)
+@mock.patch('postgres_db_backup.calc_key_base', autospec=True)
+@mock.patch('postgres_db_backup.pg_dump_to_storage', autospec=True)
+@mock.patch('postgres_db_backup.k8s_objects_to_storage', autospec=True)
+@mock.patch('postgres_db_backup.cleanup_old_backups', autospec=True)
+def test_postgres_db_backup(m_cob, m_kots, m_pdts, m_ckb, m_boto3):
+    db_name = 'fake_db_name'
+    users = ['fake_user']
+    namespace = 'fake_namespace'
+    bucket = 'fake_bucket'
+    stg_endpoint = 'fake_stg_endpoint'
+    stg_tls_verify = False
+    stg_access_key = 'fake_stg_access_key'
+    stg_secret_key = 'fake_stg_secret_key'
+    postgres_db_backup.postgres_db_backup(
+        db_name, users, namespace, bucket, stg_endpoint, stg_tls_verify,
+        stg_access_key, stg_secret_key)
+
+    m_boto3.client.assert_called_once_with(
+        's3',
+        endpoint_url=stg_endpoint,
+        verify=stg_tls_verify,
+        aws_access_key_id=stg_access_key,
+        aws_secret_access_key=stg_secret_key)
+
+    m_ckb.assert_called_once_with(db_name)
+    m_pdts.assert_called_once_with(
+        m_ckb.return_value, m_boto3.client.return_value, bucket)
+    m_kots.assert_called_once_with(
+        db_name, users, namespace, m_boto3.client.return_value, bucket, m_ckb.return_value)
+    m_cob.assert_called_once_with(m_boto3.client.return_value, bucket, db_name)
+
+
 @mock.patch('postgres_db_backup.kubernetes.config')
 @mock.patch('postgres_db_backup.postgres_db_backup', autospec=True)
 def test_main(mock_pdb, mock_ks_config, monkeypatch):
     db_name = 'fake_db_name'
     monkeypatch.setenv('DB_NAME', db_name)
+    users = ['fake_user']
+    monkeypatch.setenv('USERS', json.dumps(users))
     namespace = 'fake_namespace'
     monkeypatch.setenv('NAMESPACE', namespace)
     bucket_name = 'fake_bucket'
     monkeypatch.setenv('STORAGE_BUCKET', bucket_name)
+    stg_endpoint = 'fake_storage_endpoint'
+    monkeypatch.setenv('STORAGE_ENDPOINT', stg_endpoint)
+    stg_tls_verify = False
+    monkeypatch.setenv('STORAGE_TLS_VERIFY', str(stg_tls_verify))
+    stg_acces_key = 'fake_stg_access_key'
+    monkeypatch.setenv('STORAGE_ACCESS_KEY', stg_acces_key)
+    stg_secret_key = 'fake_stg_secret_key'
+    monkeypatch.setenv('STORAGE_SECRET_KEY', stg_secret_key)
+
     postgres_db_backup.main()
     mock_ks_config.load_incluster_config.assert_called_once_with()
-    mock_pdb.assert_called_once_with(db_name, namespace, bucket_name)
+    mock_pdb.assert_called_once_with(
+        db_name, users, namespace, bucket_name, stg_endpoint, stg_tls_verify,
+        stg_acces_key, stg_secret_key)

@@ -19,6 +19,7 @@
 
 import datetime
 import io
+import json
 import logging
 import os
 import subprocess
@@ -53,6 +54,7 @@ def pg_dump_to_storage(key_base, stg_client, bucket):
 
 
 def fetch_secrets_yaml(ks_core_v1, name, namespace):
+    logging.info("Fetching %s/%s secrets", namespace, name)
     secret = ks_core_v1.read_namespaced_secret(name, namespace)
     res = {
         'apiVersion': secret.api_version,
@@ -66,6 +68,36 @@ def fetch_secrets_yaml(ks_core_v1, name, namespace):
         'data': secret.data,
     }
     return yaml.dump(res)
+
+
+def user_name_to_secret_name(user_name):
+    return user_name.replace('_', '-')
+
+
+def k8s_objects_to_storage(db_name, users, namespace, stg_client, bucket, key_base):
+    ks_core_v1 = kubernetes.client.CoreV1Api()
+    objs = []
+    for u in users:
+        secret_name = user_name_to_secret_name(u)
+        objs.append(fetch_secrets_yaml(
+            ks_core_v1, f'{secret_name}.{db_name}.credentials', namespace))
+    objs.append(fetch_secrets_yaml(
+        ks_core_v1, f'postgres.{db_name}.credentials', namespace))
+    objs.append(fetch_secrets_yaml(
+        ks_core_v1, f'standby.{db_name}.credentials', namespace))
+
+    creds_contents = ''
+    for o in objs:
+        s = f'''
+---
+{o}
+'''
+        creds_contents += s
+
+    creds_key = f'{key_base}.manifest'
+    stg_client.upload_fileobj(
+        io.BytesIO(creds_contents.encode('utf-8')), bucket, creds_key)
+    logging.info("Completed sending creds file to storage. key=%r", creds_key)
 
 
 def upload_fileobj_cb(count):
@@ -130,12 +162,9 @@ def cleanup_old_backups(stg_client, bucket, db_name):
     delete_backups(stg_client, bucket, db_name, keys, timestamps_to_delete)
 
 
-def postgres_db_backup(db_name, namespace, bucket):
-    stg_endpoint = os.environ['STORAGE_ENDPOINT']
-    stg_tls_verify = (os.environ['STORAGE_TLS_VERIFY'].lower() == 'true')
-    stg_acces_key = os.environ['STORAGE_ACCESS_KEY']
-    stg_secret_key = os.environ['STORAGE_SECRET_KEY']
-
+def postgres_db_backup(
+        db_name, users, namespace, bucket, stg_endpoint, stg_tls_verify,
+        stg_acces_key, stg_secret_key):
     logging.info(
         "Initializing storage client. endpoint=%s access_key=%s",
         stg_endpoint, stg_acces_key)
@@ -150,31 +179,7 @@ def postgres_db_backup(db_name, namespace, bucket):
     key_base = calc_key_base(db_name)
 
     pg_dump_to_storage(key_base, stg_client, bucket)
-
-    ks_core_v1 = kubernetes.client.CoreV1Api()
-    sa_creds = fetch_secrets_yaml(
-        ks_core_v1, f'service-account.{db_name}.credentials', namespace)
-    pg_creds = fetch_secrets_yaml(
-        ks_core_v1, f'postgres.{db_name}.credentials', namespace)
-    standby_creds = fetch_secrets_yaml(
-        ks_core_v1, f'standby.{db_name}.credentials', namespace)
-
-    creds_contents = f'''
----
-{sa_creds}
-
----
-{pg_creds}
-
----
-{standby_creds}
-'''
-
-    creds_key = f'{key_base}.manifest'
-    stg_client.upload_fileobj(
-        io.BytesIO(creds_contents.encode('utf-8')), bucket, creds_key)
-    logging.info("Completed sending creds file to storage. key=%r", creds_key)
-
+    k8s_objects_to_storage(db_name, users, namespace, stg_client, bucket, key_base)
     cleanup_old_backups(stg_client, bucket, db_name)
 
 
@@ -187,10 +192,19 @@ def main():
     kubernetes.config.load_incluster_config()
 
     db_name = os.environ['DB_NAME']
+    users_str = os.environ['USERS']
+    users = json.loads(users_str)
     namespace = os.environ['NAMESPACE']
     bucket = os.environ['STORAGE_BUCKET']
 
-    postgres_db_backup(db_name, namespace, bucket)
+    stg_endpoint = os.environ['STORAGE_ENDPOINT']
+    stg_tls_verify = (os.environ['STORAGE_TLS_VERIFY'].lower() == 'true')
+    stg_acces_key = os.environ['STORAGE_ACCESS_KEY']
+    stg_secret_key = os.environ['STORAGE_SECRET_KEY']
+
+    postgres_db_backup(
+        db_name, users, namespace, bucket, stg_endpoint, stg_tls_verify,
+        stg_acces_key, stg_secret_key)
 
 
 if __name__ == '__main__':

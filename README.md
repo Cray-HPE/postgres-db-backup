@@ -12,13 +12,14 @@ The output of this program is that a couple of objects will be created in the bu
 The objects are:
 
 * `<db_name>-<timestamp>.psql` : This is the pg-dump output.
-* `<db_name>-<timestamp>.manifest` : These are extra objects (typically secrets) that are associated with the database.
+* `<db_name>-<timestamp>.manifest` : These are extra objects (typically secrets) that are associated with the database (the users).
 
 If the new objects are created then any older objects for the DB are removed.
 
 ### Environment
 
 * `DB_NAME` : This is used as the base for the keys of the objects added to the bucket for the database being backed up.
+* `USERS` : JSON-formatted list of strings which are the users to store credentials for.
 * `NAMESPACE` : The Kubernetes namespace that the database to backup is deployed to.
 * `STORAGE_ENDPOINT` : The endpoint for the radosgw.
 * `STORAGE_TLS_VERIFY` : Boolean that indicates whether to validate the storage endpoint host certificate.
