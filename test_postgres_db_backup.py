@@ -17,6 +17,7 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
+import decimal
 import json
 import subprocess
 import unittest.mock as mock
@@ -27,16 +28,135 @@ import yaml
 import postgres_db_backup
 
 
+@mock.patch('postgres_db_backup.psycopg2')
+def test_query_replicas_no_replicas(m_pg):
+    pg_host = 'fake_pg_host'
+    pg_port = 'fake_pg_port'
+    pg_database = 'fake_pg_database'
+    pg_user = 'fake_pg_user'
+    pg_password = 'fake_pg_password'
+
+    with m_pg.connect.return_value as m_conn:
+        with m_conn.cursor.return_value as m_curs:
+            m_curs.fetchall.return_value = []  # No replicas
+
+    res = postgres_db_backup.query_replicas(
+        pg_host, pg_port, pg_database, pg_user, pg_password)
+
+    m_pg.connect.assert_called_once_with(
+        dbname=pg_database, user=pg_user, password=pg_password,
+        host=pg_host, port=pg_port)
+
+    assert res is None
+
+
+@mock.patch('postgres_db_backup.psycopg2')
+def test_query_replicas_one_replica_caught_up(m_pg):
+    pg_host = 'fake_pg_host'
+    pg_port = 'fake_pg_port'
+    pg_database = 'fake_pg_database'
+    pg_user = 'fake_pg_user'
+    pg_password = 'fake_pg_password'
+
+    with m_pg.connect.return_value as m_conn:
+        with m_conn.cursor.return_value as m_curs:
+            m_curs.fetchall.return_value = [
+                ('fake_name_1', decimal.Decimal(0)),
+            ]
+
+    res = postgres_db_backup.query_replicas(
+        pg_host, pg_port, pg_database, pg_user, pg_password)
+
+    assert res == 'fake_name_1'
+
+
+@mock.patch('postgres_db_backup.psycopg2')
+def test_query_replicas_one_replica_behind(m_pg):
+    pg_host = 'fake_pg_host'
+    pg_port = 'fake_pg_port'
+    pg_database = 'fake_pg_database'
+    pg_user = 'fake_pg_user'
+    pg_password = 'fake_pg_password'
+
+    with m_pg.connect.return_value as m_conn:
+        with m_conn.cursor.return_value as m_curs:
+            m_curs.fetchall.return_value = [
+                ('fake_name_1', decimal.Decimal(1048577)),  # Too far behind.
+            ]
+
+    res = postgres_db_backup.query_replicas(
+        pg_host, pg_port, pg_database, pg_user, pg_password)
+
+    assert res is None
+
+
+@mock.patch('postgres_db_backup.psycopg2')
+def test_query_replicas_picks_closest(m_pg):
+    pg_host = 'fake_pg_host'
+    pg_port = 'fake_pg_port'
+    pg_database = 'fake_pg_database'
+    pg_user = 'fake_pg_user'
+    pg_password = 'fake_pg_password'
+
+    with m_pg.connect.return_value as m_conn:
+        with m_conn.cursor.return_value as m_curs:
+            m_curs.fetchall.return_value = [
+                ('fake_name_1', decimal.Decimal(20)),
+                ('fake_name_2', decimal.Decimal(10)),
+            ]
+
+    res = postgres_db_backup.query_replicas(
+        pg_host, pg_port, pg_database, pg_user, pg_password)
+
+    assert res == 'fake_name_2'
+
+
+@mock.patch('postgres_db_backup.query_replicas', autospec=True)
+def test_select_target_pg_host_use_replica(m_qr):
+    # When there's a replica that can be used then that's used.
+    pg_host = 'fake_pg_host'
+    pg_port = 'fake_pg_port'
+    pg_database = 'fake_pg_database'
+    pg_user = 'fake_pg_user'
+    pg_password = 'fake_pg_password'
+
+    res = postgres_db_backup.select_target_pg_host(
+        pg_host, pg_port, pg_database, pg_user, pg_password)
+
+    m_qr.assert_called_once_with(pg_host, pg_port, pg_database, pg_user, pg_password)
+
+    assert res is m_qr.return_value
+
+
+@mock.patch('postgres_db_backup.query_replicas', autospec=True)
+def test_select_target_pg_host_use_leader(m_qr):
+    # When there's no replica that can be used then leader is used.
+    pg_host = 'fake_pg_host'
+    pg_port = 'fake_pg_port'
+    pg_database = 'fake_pg_database'
+    pg_user = 'fake_pg_user'
+    pg_password = 'fake_pg_password'
+
+    m_qr.return_value = None
+
+    res = postgres_db_backup.select_target_pg_host(
+        pg_host, pg_port, pg_database, pg_user, pg_password)
+
+    assert res == pg_host
+
+
 @mock.patch('postgres_db_backup.subprocess.Popen')
 def test_pg_dump_to_storage_works(m_popen):
     m_popen.return_value.returncode = 0
 
+    target_host = 'fake_target_host'
     key_base = 'fake_key_base'
     m_stg_client = mock.Mock()
     bucket = 'fake_bucket'
-    postgres_db_backup.pg_dump_to_storage(key_base, m_stg_client, bucket)
+    postgres_db_backup.pg_dump_to_storage(
+        target_host, key_base, m_stg_client, bucket)
 
-    exp_command = ['pg_dumpall', '-c']
+    exp_command = ['pg_dumpall', '-c', '-h', target_host]
     m_popen.assert_called_once_with(exp_command, stdout=subprocess.PIPE)
 
     exp_pgdump_key = f'{key_base}.psql'
@@ -54,11 +174,13 @@ def test_pg_dump_to_storage_bad_exit_code(m_popen):
     # When the exit status of the pg_dumpall subprocess is not 0 an exception is
     # raised.
     m_popen.return_value.returncode = 1
+    target_host = 'fake_target_host'
     key_base = 'fake_key_base'
     m_stg_client = mock.Mock()
     bucket = 'fake_bucket'
     with pytest.raises(Exception, match="pg_dumpall command failed."):
-        postgres_db_backup.pg_dump_to_storage(key_base, m_stg_client, bucket)
+        postgres_db_backup.pg_dump_to_storage(
+            target_host, key_base, m_stg_client, bucket)
 
 
 def test_fetch_secrets_yaml():
@@ -328,23 +450,33 @@ def test_cleanup_old_backups(m_db, m_cttd, m_gbt):
         stg_client, bucket, db_name, mock.sentinel.keys, m_cttd.return_value)
 
 
+@mock.patch('postgres_db_backup.select_target_pg_host', autospec=True)
 @mock.patch('postgres_db_backup.boto3', autospec=True)
 @mock.patch('postgres_db_backup.calc_key_base', autospec=True)
 @mock.patch('postgres_db_backup.pg_dump_to_storage', autospec=True)
 @mock.patch('postgres_db_backup.k8s_objects_to_storage', autospec=True)
 @mock.patch('postgres_db_backup.cleanup_old_backups', autospec=True)
-def test_postgres_db_backup(m_cob, m_kots, m_pdts, m_ckb, m_boto3):
+def test_postgres_db_backup(m_cob, m_kots, m_pdts, m_ckb, m_boto3, m_stpg):
     db_name = 'fake_db_name'
     users = ['fake_user']
     namespace = 'fake_namespace'
     bucket = 'fake_bucket'
+    pg_host = 'fake_pg_host'
+    pg_port = 'fake_pg_port'
+    pg_database = 'fake_pg_database'
+    pg_user = 'fake_pg_user'
+    pg_password = 'fake_pg_password'
     stg_endpoint = 'fake_stg_endpoint'
     stg_tls_verify = False
     stg_access_key = 'fake_stg_access_key'
     stg_secret_key = 'fake_stg_secret_key'
     postgres_db_backup.postgres_db_backup(
-        db_name, users, namespace, bucket, stg_endpoint, stg_tls_verify,
-        stg_access_key, stg_secret_key)
+        db_name, users, namespace, bucket,
+        pg_host, pg_port, pg_database, pg_user, pg_password,
+        stg_endpoint, stg_tls_verify, stg_access_key, stg_secret_key)
+
+    m_stpg.assert_called_once_with(
+        pg_host, pg_port, pg_database, pg_user, pg_password)
 
     m_boto3.client.assert_called_once_with(
         's3',
@@ -355,7 +487,7 @@ def test_postgres_db_backup(m_cob, m_kots, m_pdts, m_ckb, m_boto3):
 
     m_ckb.assert_called_once_with(db_name)
     m_pdts.assert_called_once_with(
-        m_ckb.return_value, m_boto3.client.return_value, bucket)
+        m_stpg.return_value, m_ckb.return_value, m_boto3.client.return_value, bucket)
     m_kots.assert_called_once_with(
         db_name, users, namespace, m_boto3.client.return_value, bucket, m_ckb.return_value)
     m_cob.assert_called_once_with(m_boto3.client.return_value, bucket, db_name)
@@ -370,6 +502,16 @@ def test_main(mock_pdb, mock_ks_config, monkeypatch):
     monkeypatch.setenv('USERS', json.dumps(users))
     namespace = 'fake_namespace'
     monkeypatch.setenv('NAMESPACE', namespace)
+    pg_host = 'fake_pg_host'
+    monkeypatch.setenv('PGHOST', pg_host)
+    pg_port = 'fake_pg_port'
+    monkeypatch.setenv('PGPORT', pg_port)
+    pg_database = 'fake_pg_database'
+    monkeypatch.setenv('PGDATABASE', pg_database)
+    pg_user = 'fake_pg_user'
+    monkeypatch.setenv('PGUSER', pg_user)
+    pg_password = 'fake_pg_password'
+    monkeypatch.setenv('PGPASSWORD', pg_password)
     bucket_name = 'fake_bucket'
     monkeypatch.setenv('STORAGE_BUCKET', bucket_name)
     stg_endpoint = 'fake_storage_endpoint'
@@ -384,5 +526,6 @@ def test_main(mock_pdb, mock_ks_config, monkeypatch):
     postgres_db_backup.main()
     mock_ks_config.load_incluster_config.assert_called_once_with()
     mock_pdb.assert_called_once_with(
-        db_name, users, namespace, bucket_name, stg_endpoint, stg_tls_verify,
-        stg_acces_key, stg_secret_key)
+        db_name, users, namespace, bucket_name,
+        pg_host, pg_port, pg_database, pg_user, pg_password,
+        stg_endpoint, stg_tls_verify, stg_acces_key, stg_secret_key)
