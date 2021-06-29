@@ -67,11 +67,16 @@ Update the constraints.txt with that output.
 ## Running tests
 
 ```
+mkdir -p results
+
 docker build --tag postgres-db-backup-codestyle --target codestyle . &&
 docker run --rm postgres-db-backup-codestyle &&
 docker build --tag postgres-db-backup-test --target testing . &&
-docker run --rm postgres-db-backup-test
+docker run --rm --mount type=bind,source=$(PWD)/results,destination=/results postgres-db-backup-test
 ```
+
+`open results/coverage/index.html` to see the coverage report in your browser.
+
 
 ## Testing using the Helm chart
 

@@ -29,4 +29,9 @@ if [[ -z "$QUIET" ]]; then
   pip3 freeze 2>&1 | tee /results/pip_freeze.out
 fi
 
-pytest
+pytest \
+ --junitxml=/results/results.xml \
+ --cov-report term \
+ --cov-report xml:/results/coverage.xml \
+ --cov-report html:/results/coverage \
+ --cov=.
