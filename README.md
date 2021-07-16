@@ -60,19 +60,14 @@ docker run --rm postgres-db-backup:0.1.0 pip freeze
 
 Put the result in constraints.txt.
 
-Run the codestyle test below.
+Run the codestyle test from the Makefile.
 Part of the output is the output of pip freeze after installing the test requirements.
 Update the constraints.txt with that output.
 
 ## Running tests
 
 ```
-mkdir -p results
-
-docker build --tag postgres-db-backup-codestyle --target codestyle . &&
-docker run --rm postgres-db-backup-codestyle &&
-docker build --tag postgres-db-backup-test --target testing . &&
-docker run --rm --mount type=bind,source=$(PWD)/results,destination=/results postgres-db-backup-test
+make test
 ```
 
 `open results/coverage/index.html` to see the coverage report in your browser.
