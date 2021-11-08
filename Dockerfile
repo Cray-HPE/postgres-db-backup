@@ -17,7 +17,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 
 
-FROM arti.dev.cray.com/baseos-docker-master-local/alpine:3.12.6 AS base
+FROM artifactory.algol60.net/docker.io/library/alpine AS base
 
 WORKDIR /usr/src/app
 
