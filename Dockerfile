@@ -17,7 +17,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 
 
-FROM artifactory.algol60.net/docker.io/library/alpine AS base
+FROM artifactory.algol60.net/docker.io/alpine AS base
 
 WORKDIR /usr/src/app
 
