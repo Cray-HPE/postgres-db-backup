@@ -25,7 +25,13 @@ FROM artifactory.algol60.net/docker.io/library/alpine AS base
 
 WORKDIR /usr/src/app
 
-RUN apk add --no-cache python3 postgresql-client postgresql-dev gcc python3-dev musl-dev && ln -sf python3 /usr/bin/python
+RUN apk add --no-cache python3 gcc python3-dev musl-dev && ln -sf python3 /usr/bin/python
+
+# To maintain psql v12 -- pin postgresql-client and postgresql-dev
+RUN echo "http://dl-cdn.alpinelinux.org/alpine/v3.12/main" >> /etc/apk/repositories
+RUN apk add 'postgresql-client=12.10-r0'
+RUN apk add 'postgresql-dev=12.10-r0'
+
 RUN python3 -m ensurepip
 RUN pip3 install --no-cache --upgrade pip setuptools
 
